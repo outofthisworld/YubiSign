@@ -1,0 +1,27 @@
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "description": "My awesome app",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest"
+  },
+  "author": "John Doe",
+  "license": "MIT",
+  "dependencies": {
+    "aws-sdk": "^2.642.0",
+    "cron": "^2.0.3",
+    "crypto": "1.0.1",
+    "express": "^4.17.1",
+    "fs": "0.0.1-security",
+    "yubico-piv-tool": "^1.4.4"
+  },
+  "devDependencies": {
+    "@sentry/node": "^5.27.3",
+    "jest": "^26.1.0"
+  }
+}
+
+
+
