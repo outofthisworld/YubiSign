@@ -7,6 +7,10 @@ import crypto from "crypto";
 import cron from "cron";
 const s3 = new AWS.S3();
 const sqs = new AWS.SQS();
+import Redlock from 'redlock';
+
+// Create a Redlock client
+const redlock = new Redlock([redis]);
 
 // Initialize the Sentry client
 Sentry.init({
@@ -124,16 +128,9 @@ async function processJobs(): Promise<void> {
       for (const message of response.Messages) {
         const job = JSON.parse(message.Body);
 
-        // Check if the job is currently being processed by another instance
+        // Acquire a lock on the job
         const lockKey = `lock:${job.pdfPath}`;
-        const lockValue = await redis.get(lockKey);
-        if (lockValue) {
-          // If the job is already being processed, skip it
-          continue;
-        }
-
-        // Set the lock to indicate that the job is being processed
-        await redis.set(lockKey, '1', 'EX', 60); // Set the lock to expire after 60 seconds
+        const lock = await redlock.lock(lockKey, 1000); // Set the lock to expire after 1000 milliseconds (1 second)
 
         let retries = 0;
         let succeeded = false;
@@ -165,14 +162,11 @@ async function processJobs(): Promise<void> {
 
             // Increment the retry count
             retries++;
-
-            // Renew the lock
-            await redis.expire(lockKey, 60);
           }
         }
 
-        // Clear the lock to indicate that the job is finished
-        await redis.del(lockKey);
+        // Release the lock on the job
+        await lock.unlock();
       }
     }
   } catch (error) {
