@@ -5,7 +5,7 @@ import AWS from "aws-sdk";
 import yubicoPivTool from "yubico-piv-tool";
 import crypto from "crypto";
 import cron from "cron";
-import yubikeyManager from 'yubikey-manager';
+import yubicoPivTool from 'yubico-piv-tool';
 import Redlock from 'redlock';
 
 // Amazon s3
@@ -51,19 +51,18 @@ async function signPdf(
   pin: string,
   ykmsUrl: string
 ): Promise<Buffer> {
-  // Connect to the YubiKey Manager Server
-  const ykms = yubikeyManager.connect(ykmsUrl);
-
-  // Use the yubikey-manager library to sign the PDF
+  // Use the yubico-piv-tool library to sign the PDF
+  const ypt = new yubicoPivTool({ reader: ykmsUrl }); // Specify the URL of the YubiKey Manager Server as the "reader"
   const options = {
     signer: keySlot,
     pin,
     input: pdf,
     algorithm: crypto.constants.RSA_PKCS1_PSS_PADDING
   };
-  const signedPdf = await ykms.sign(options);
+  const signedPdf = await ypt.sign(options);
   return signedPdf;
 }
+
 
 async function uploadPdf(
   pdf: Buffer,
