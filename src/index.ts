@@ -119,52 +119,67 @@ async function processJobs(): Promise<void> {
     };
     const response = await sqs.receiveMessage(params).promise();
 
-    // Check if there are any new jobs in the queue
+    // Process each job in the queue
     if (response.Messages) {
-      // Process each job in the queue
       for (const message of response.Messages) {
-        // Parse the job data from the message body
         const job = JSON.parse(message.Body);
-        const { pdfPath, keySlot, pin, bucket } = job;
 
-        // Download the PDF from S3
-        const s3Params = {
-          Bucket: bucket, // Set the name of the S3 bucket
-          Key: pdfPath
-        };
-        const s3Response = await s3.getObject(s3Params).promise();
-        const pdf = s3Response.Body;
+        // Check if the job is currently being processed by another instance
+        const lockKey = `lock:${job.pdfPath}`;
+        const lockValue = await redis.get(lockKey);
+        if (lockValue) {
+          // If the job is already being processed, skip it
+          continue;
+        }
 
-        // Sign the PDF using the provided key slot and PIN
-        const signedPdf = await signPdf(pdf, keySlot, pin);
+        // Set the lock to indicate that the job is being processed
+        await redis.set(lockKey, '1', 'EX', 60); // Set the lock to expire after 60 seconds
 
-        await uploadPdf(signedPdf, bucket, `${pdfPath}.signed`);
+        let retries = 0;
+        let succeeded = false;
+        while (!succeeded && retries < 5) {
+          try {
+            // Download the PDF from S3
+            const s3Params = {
+              Bucket: job.bucket,
+              Key: job.pdfPath
+            };
+            const pdfData = await s3.getObject(s3Params).promise();
 
-        // Delete the original PDF and the signed PDF from the local file system
-        fs.unlink(pdfPath, (error) => {
-          if (error) {
+            // Sign the PDF using the YubiKey
+            const signedPdf = await signPdf(pdfData.Body, job.keySlot, job.pin);
+
+            // Upload the signed PDF to S3
+            await uploadPdf(signedPdf, job.bucket, job.pdfPath);
+
+            // Delete the job from the queue
+            await sqs.deleteMessage({
+              QueueUrl: params.QueueUrl,
+              ReceiptHandle: message.ReceiptHandle
+            }).promise();
+
+            // Set the succeeded flag to true to exit the loop
+            succeeded = true;
+          } catch (error) {
             console.error(error);
-          }
-        });
-        fs.unlink(`${pdfPath}.signed`, (error) => {
-          if (error) {
-            console.error(error);
-          }
-        });
 
-        // Delete the message from the SQS queue
-        const deleteParams = {
-          QueueUrl: "https://sqs.us-east-1.amazonaws.com/123456789012/my-queue", // Set the URL of the SQS queue
-          ReceiptHandle: message.ReceiptHandle
-        };
-        await sqs.deleteMessage(deleteParams).promise();
+            // Increment the retry count
+            retries++;
+
+            // Renew the lock
+            await redis.expire(lockKey, 60);
+          }
+        }
+
+        // Clear the lock to indicate that the job is finished
+        await redis.del(lockKey);
       }
     }
   } catch (error) {
-    // Handle any errors that occur during job processing
     console.error(error);
   }
 }
+
 
 new cron.CronJob({
   // Set the cron pattern for when the job should run
